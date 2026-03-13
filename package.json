@@ -1,6 +1,6 @@
 {
   "name": "@nitl-temp/tscli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Quick and easy TypeScript CLI generator",
   "author": "Nerd <nerd@nerdintheloop.com> (https://nerdintheloop.com)",
   "license": "MIT",
@@ -24,7 +24,7 @@
     "node": ">=25.7.0"
   },
   "devDependencies": {
-    "@nitl-temp/tscli": "^0.0.1",
+    "@nitl-temp/tscli": "^0.0.2",
     "@types/bun": "^1.3.10",
     "@types/deno": "^2.5.0",
     "@types/node": "^25.4.0"

@@ -186,7 +186,7 @@ export const runCLICommand = async (command: string, run: Run, script?: CLIComma
 
     try {
       const { signal } = run.abortController!
-      const functionOutput = await cliCommandFunction!(convertArgsToCLICommandFunctionArguments(args, cliCommand), { command: cliCommand, script, signal })
+      const functionOutput = await cliCommandFunction!(convertArgsToCLICommandFunctionArguments(args, cliCommand), { command, script, signal })
 
       if (functionOutput) {
         if (Number.isInteger(functionOutput)) return { exitCode: functionOutput as number }
