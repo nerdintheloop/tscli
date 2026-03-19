@@ -1,0 +1,32 @@
+{
+  "name": "@nerdintheloop/tscli",
+  "version": "0.0.1",
+  "description": "Quick and easy TypeScript CLI generator",
+  "author": "Actual Person <human@nerdintheloop.com> (https://nerdintheloop.com)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nerdintheloop/tscli.git"
+  },
+  "bugs": "https://github.com/nerdintheloop/tscli/issues",
+  "homepage": "https://tscli.nerdintheloop.com",
+  "keywords": [
+    "bun",
+    "cli",
+    "deno",
+    "typescript",
+    "utility"
+  ],
+  "type": "module",
+  "engines": {
+    "bun": ">=1.3.11",
+    "deno": ">=2.7.4",
+    "node": ">=25.7.0"
+  },
+  "devDependencies": {
+    "@nerdintheloop/tscli": "^0.0.1",
+    "@types/bun": "^1.3.11",
+    "@types/deno": "^2.5.0",
+    "@types/node": "^25.5.0"
+  }
+}
