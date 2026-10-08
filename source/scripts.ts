@@ -1,131 +1,56 @@
-import { bold } from './ansi.ts'
-import { ErrorCode, runChildProcess } from './child-processes.ts'
-import { getCommandName, parseCommand, runTSCommand } from './commands.ts'
-import { Buffer, chdir, EOL, format, parse, process, sep, SIGHUP } from './external.ts'
-import { DocumentationLink, documentationLinkLine } from './links.ts'
-import { type Run } from './run.ts'
-import { EOL_POSIX, normalizeLineBreaks } from './utilities.ts'
+import { runCommand } from './commands.ts'
+import type { Run } from './run.ts'
+import { bold, EOL, EOL_POSIX, ExitCode, isObject, normalizeLineBreaks, parse, sep, toString } from './shared.ts'
+import type { CommandResult, ScriptContext, ScriptOutputCaptureFunctionArguments, ScriptPromise } from './types.ts'
 
-type ErrorWithCode = Error & { code: string }
+export const ScriptErrorsCapture = {
+  All: 'all',
+  First: 'first'
+} as const
 
-export type ScriptCommandOutput = ScriptCommandCapturedOutput | number | void
+export type ScriptErrorsCapture = (typeof ScriptErrorsCapture)[keyof typeof ScriptErrorsCapture]
 
-export type ScriptCommandContext = {
-  allowInput?: true
-  captureOutput?: true
-  capturedOutput?: ScriptCommandCapturedOutput[]
-  commandName?: string
-}
+export const ScriptOutputType = {
+  Buffers: 'buffers',
+  JSON: 'json',
+  Results: 'results',
+  Text: 'text',
+} as const
 
-export type ScriptCommandCapturedOutput = {
-  command: string
+export type ScriptOutputType = (typeof ScriptOutputType)[keyof typeof ScriptOutputType]
+
+export type ScriptResult = {
   error?: unknown
-  exitCode?: number
-  output?: unknown
-  stderr?: Buffer | string
-  stdout?: Buffer | string
-  type: string
-}
-
-export type ScriptFunction = (strings: TemplateStringsArray, ...values: unknown[]) => ScriptPromise
-
-export type ScriptOutputCaptured = {
-  error?: unknown
-  exitCode: number
-  output: ScriptCommandCapturedOutput[]
-}
-
-export type ScriptOutputConcatenated = ScriptOutputConcatenatedBuffers | ScriptOutputConcatenatedText
-
-export type ScriptOutputConcatenatedBuffers = {
-  error?: unknown
-  exitCode: number
-  stderr: Buffer
-  stdout: Buffer
-}
-
-export type ScriptOutputConcatenatedText = {
-  error?: unknown
-  exitCode: number
-  stderr: string
-  stdout: string
-}
-
-export type ScriptOutputDefault = {
+  errors?: unknown[]
   exitCode: number
 }
 
-export type ScriptPromise = Promise<{ exitCode: number }> & {
-  allowInput: () => ScriptPromiseInputAllowed
-  captureOutput: ScriptPromiseOutputCapturedFunction
-}
+const resolveCommandError = (result: CommandResult) => {
+  let { error } = result
 
-export type ScriptPromiseInputAllowed = Promise<ScriptOutputDefault> & { captureOutput: ScriptPromiseInputAllowedOutputCapturedFunction }
+  if (!error && result.stderr) {
+    const stderrString = String(result.stderr)
 
-export type ScriptPromiseInputAllowedOutputCapturedFunction = {
-  (): Promise<ScriptOutputCaptured> & { concat: ScriptPromiseInputAllowedOutputConcatenatedFunction }
-}
-
-export type ScriptPromiseInputAllowedOutputConcatenatedFunction = {
-  (): Promise<ScriptOutputConcatenatedBuffers> & { text: () => Promise<ScriptOutputConcatenatedText> }
-}
-
-export type ScriptPromiseOutputCapturedFunction = {
-  (): Promise<ScriptOutputCaptured> & { allowInput: ScriptPromiseInputAllowedOutputCapturedFunction; concat: ScriptPromiseOutputConcatenatedFunction }
-}
-
-export type ScriptPromiseOutputConcatenatedFunction = {
-  (): Promise<ScriptOutputConcatenatedBuffers> & { allowInput: () => Promise<ScriptOutputConcatenated>; text: ScriptPromiseOutputConcatenatedTextFunction }
-}
-
-export type ScriptPromiseOutputConcatenatedTextFunction = {
-  (): Promise<ScriptOutputConcatenatedText> & { allowInput: () => Promise<ScriptOutputConcatenatedText> }
-}
-
-const ScriptCommandType = {
-  ChildProcess: 'child-process',
-  TSCommand: 'ts-command',
-}
-
-const ScriptConcatenation = {
-  Buffers: 0,
-  Text: 1,
-}
-
-const CHANGE_DIRECTORY_COMMAND = 'cd'
-
-const concatenateCapturedOutput = (output: ScriptCommandCapturedOutput[], concatenation: number): Partial<ScriptOutputConcatenated> => {
-  const stderr: (Buffer | string)[] = []
-  const stdout: (Buffer | string)[] = []
-
-  for (const command of output) {
-    if (command.stderr) stderr.push(command.stderr)
-
-    if (command.stdout) stdout.push(command.stdout)
-    else if (command.output) stdout.push(command.output instanceof Buffer || typeof command.output === 'string' ? command.output : format('%s', command.output))
+    if (stderrString) error = stderrString
   }
 
-  if (concatenation === ScriptConcatenation.Text) {
-    return {
-      stderr: stderr.map((value) => value instanceof Buffer ? value.toString() : value).join(''),
-      stdout: stdout.map((value) => value instanceof Buffer ? value.toString() : value).join(''),
-    }
+  if (!error) {
+    let { command, exitCode } = result
+
+    error = `The command ${bold(command.join(' '))} exited with code ${exitCode}\n`
   }
 
-  return {
-    stderr: Buffer.concat(stderr.map((value) => value instanceof Buffer ? value : Buffer.from(value))),
-    stdout: Buffer.concat(stdout.map((value) => value instanceof Buffer ? value : Buffer.from(value))),
-  }
+  return error
 }
 
-const determineScriptTSCommandName = (run: Run) => {
+const determineScriptCommandName = (run: Run) => {
   const cliDirectoryPath = parse(run.cliScriptPath).dir
   const tscliPathName = new URL(import.meta.url).pathname
-  const tsCommandFilePathLine = new Error().stack!.split('\n').find(line => line.includes(cliDirectoryPath) && !line.includes(tscliPathName))
+  const commandFilePathLine = new Error().stack!.split('\n').find(line => line.includes(cliDirectoryPath) && !line.includes(tscliPathName))
   let name: string | undefined
 
-  if (tsCommandFilePathLine) {
-    const nameString = tsCommandFilePathLine.slice(tsCommandFilePathLine.indexOf(cliDirectoryPath) + cliDirectoryPath.length).split(sep).find(value => !!value)
+  if (commandFilePathLine) {
+    const nameString = commandFilePathLine.slice(commandFilePathLine.indexOf(cliDirectoryPath) + cliDirectoryPath.length).split(sep).find(value => !!value)
 
     if (nameString) name = nameString.includes('.ts') ? nameString.slice(0, nameString.indexOf('.ts')) : nameString
   }
@@ -177,7 +102,7 @@ export const parseScript = (raw: string) => {
 
         command = ''
       } else if (concurrent) {
-        if (concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] : concurrent)
+        if (concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] as string : concurrent)
         concurrent = undefined
       }
     } else if (character === EOL_POSIX) {
@@ -188,7 +113,7 @@ export const parseScript = (raw: string) => {
           concurrent.push(command)
           sequence.push(concurrent)
         } else sequence.push(command)
-      } else if (concurrent && concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] : concurrent)
+      } else if (concurrent && concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] as string : concurrent)
 
       command = ''
       concurrent = undefined
@@ -207,185 +132,168 @@ export const parseScript = (raw: string) => {
       concurrent.push(command)
       sequence.push(concurrent)
     } else sequence.push(command)
-  } else if (concurrent && concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] : concurrent)
+  } else if (concurrent && concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] as string : concurrent)
 
   return sequence
 }
 
-export const runScript = (script: string, run?: Run): ScriptPromise => {
+export const runScript = (script: string, run: Run): ScriptPromise => {
   const commands = parseScript(script)
-  const context: ScriptCommandContext = {}
-  let error: unknown | undefined
-  let exitCode = 0
-  let concatenation: number | undefined
-
-  if (run) context.commandName = determineScriptTSCommandName(run)
-
-  const promise = (async (): Promise<unknown> => {
+  const context: ScriptContext = { capture: { errors: false, input: false, output: false }, script, parentCommand: determineScriptCommandName(run)! }
+  const promise = (async () => {
     await null
 
-    if (commands.length > 0) {
-      for (const item of commands) {
-        if (Array.isArray(item)) {
-          const commandsOutput: ScriptCommandOutput[] = await Promise.all((item as string[]).map((command) => runScriptCommand(command, context, run)))
+    const { capture } = context
+    const result: ScriptResult = { exitCode: 0 }
 
-          if (context.captureOutput === true) context.capturedOutput!.push(...(commandsOutput as ScriptCommandCapturedOutput[]))
+    if (capture.output) context.commandResults = []
 
-          for (const commandOutput of commandsOutput) {
-            if (context.captureOutput === true) {
-              const commandCapturedOutput = commandOutput as ScriptCommandCapturedOutput
+    for (const item of commands) {
+      if (run.abortSignal.aborted) break
 
-              if (commandCapturedOutput.exitCode) exitCode = commandCapturedOutput.exitCode
+      if (Array.isArray(item)) {
+        const concurrentCommandResults = await Promise.all((item as string[]).map((command) => runCommand(command, run, context)))
+        const errorResults = concurrentCommandResults.filter(({ error, exitCode }) => error || exitCode)
 
-              if (commandCapturedOutput.error) {
-                error = commandCapturedOutput.error
+        if (capture.output) context.commandResults!.push(...concurrentCommandResults)
 
-                if (!exitCode) exitCode = SIGHUP
-              }
-            } else if (commandOutput) exitCode = commandOutput as number
+        if (errorResults.length > 0) {
+          const firstErrorResult = errorResults[0]!
 
-            if (exitCode) break
+          if (!result.exitCode) result.exitCode = firstErrorResult.exitCode || ExitCode.Failure
+
+          if (capture.errors === ScriptErrorsCapture.All) {
+            result.errors ??= []
+            result.errors.push(...errorResults.map(resolveCommandError))
+          } else if (capture.errors === ScriptErrorsCapture.First) {
+            result.error = resolveCommandError(firstErrorResult)
+            break
+          } else {
+            const error = errorResults.find(({ error }) => !!error)?.error
+
+            if (error) throw error
+            else break
           }
-        } else {
-          const commandOutput = await runScriptCommand(item as string, context, run)
-
-          if (context.captureOutput) {
-            const commandCapturedOutput = commandOutput as ScriptCommandCapturedOutput
-
-            context.capturedOutput!.push(commandCapturedOutput)
-
-            if (commandCapturedOutput.exitCode) exitCode = commandCapturedOutput.exitCode
-
-            if (commandCapturedOutput.error) {
-              error = commandCapturedOutput.error
-
-              if (!exitCode) exitCode = SIGHUP
-            }
-          } else if (commandOutput) exitCode = commandOutput as number
         }
+      } else {
+        const commandResult = await runCommand(item as string, run, context)
 
-        if (exitCode) break
+        if (capture.output) context.commandResults!.push(commandResult)
+
+        if (commandResult.error || commandResult.exitCode) {
+          if (!result.exitCode) result.exitCode = commandResult.exitCode || ExitCode.Failure
+
+          if (capture.errors === ScriptErrorsCapture.All) {
+            result.errors ??= []
+            result.errors.push(resolveCommandError(commandResult))
+          } else if (capture.errors === ScriptErrorsCapture.First) {
+            result.error = resolveCommandError(commandResult)
+            break
+          } else if (commandResult.error) throw commandResult.error
+          else break
+        }
       }
     }
 
-    if (context.captureOutput) {
-      const output = context.capturedOutput!
-      const scriptOutput = { exitCode } as ScriptOutputCaptured
+    if (capture.output) {
+      switch (capture.output) {
+        case ScriptOutputType.Buffers: {
+          let stderrBuffer = Buffer.alloc(0)
+          let stdoutBuffer = Buffer.alloc(0)
 
-      if (error) scriptOutput.error = error
+          for (const { output, stderr, stdout } of context.commandResults!) {
+            if (stderr) stderrBuffer = Buffer.concat([stderrBuffer, stderr instanceof Buffer ? stderr : Buffer.from(stderr)])
+            if (stdout) stdoutBuffer = Buffer.concat([stdoutBuffer, stderr instanceof Buffer ? stderr : Buffer.from(stdout)])
+            else if (output) stdoutBuffer = Buffer.concat([stdoutBuffer, output instanceof Buffer ? output : Buffer.from(toString(output))])
+          }
 
-      if (concatenation !== undefined) return { ...scriptOutput, ...concatenateCapturedOutput(output, concatenation) }
+          return { ...result, stderr: stderrBuffer, stdout: stdoutBuffer }
+        }
 
-      return { ...scriptOutput, output }
+        case ScriptOutputType.Results:
+          return result
+
+        case ScriptOutputType.JSON: {
+          const strings: string[] = []
+          let json: JSON | JSON[] = []
+
+          for (const { output, stderr, stdout } of context.commandResults!) {
+            const stderrString = stderr ? stderr instanceof Buffer ? stderr.toString() : toString(stderr) : ''
+            const stdoutString = stdout
+              ? stdout instanceof Buffer ? stdout.toString() : toString(stdout)
+                ? output ? output instanceof Buffer : (output as Buffer).toString() : toString(output) :
+              ''
+
+            if (stderrString) strings.push(String(stderrString))
+            if (stdoutString) strings.push(String(stdoutString))
+          }
+
+          for (const string of strings) {
+            try {
+              json.push(JSON.parse(string))
+            } catch (error) {
+              process.stderr.write(toString(error))
+            }
+          }
+
+          if (json.length === 1) json = json[0]!
+
+          return capture.errors ? { ...result, json } : json
+        }
+
+        case ScriptOutputType.Text: {
+          const textStrings: string[] = []
+
+          for (const { output, stderr, stdout } of context.commandResults!) {
+            const stdoutString = stdout
+              ? stdout instanceof Buffer ? stdout.toString() : toString(stdout)
+                ? output ? output instanceof Buffer : (output as Buffer).toString() : toString(output) :
+              ''
+
+            if (stderr && !capture.errors) process.stderr.write(stderr instanceof Buffer ? stderr.toString() : toString(stdout))
+            if (stdoutString) textStrings.push(String(stdoutString))
+          }
+
+          const text = textStrings.join('')
+
+          return capture.errors ? { ...result, text } : text
+        }
+      }
     }
 
-    return { exitCode }
+    return result
   })()
 
   return Object.assign(promise, {
-    allowInput: () => {
-      context.allowInput = true
+    // TODO: Throw error for bad arguments?
+    capture: (args?: ScriptOutputCaptureFunctionArguments) => {
+      const { capture } = context
 
-      Object.assign(promise, { allowInput: undefined })
+      capture.errors = ScriptErrorsCapture.First
+      capture.output = ScriptOutputType.Results
 
-      return promise
-    },
-    captureOutput: () => {
-      context.captureOutput = true
-      context.capturedOutput = []
+      if (args) {
+        if (isObject(args)) {
+          const { errors, input, output } = args
 
-      Object.assign(promise, {
-        captureOutput: undefined,
-        concat: () => {
-          concatenation = ScriptConcatenation.Buffers
+          if (errors !== undefined) {
+            if (errors === false || Object.values(ScriptErrorsCapture).includes(errors)) capture.errors = errors
+            else process.stderr.write(`Invalid errors value: ${bold(toString(errors))}${EOL}`)
+          }
 
-          Object.assign(promise, {
-            concat: undefined,
-            text: () => {
-              concatenation = ScriptConcatenation.Text
+          if (input !== undefined) {
+            if (input === true) capture.input = true
+            else if (input !== false) process.stderr.write(`Invalid input value: ${bold(toString(input))}${EOL}`)
+          }
 
-              Object.assign(promise, { text: undefined })
-
-              return promise
-            },
-          })
-
-          return promise
-        },
-      })
-
-      return promise
-    },
-  }) as ScriptPromise
-}
-
-const runScriptCommand = async (command: string, context: ScriptCommandContext, run?: Run): Promise<ScriptCommandOutput> => {
-  const { captureOutput, commandName } = context
-  const name = getCommandName(command)
-
-  if (name === CHANGE_DIRECTORY_COMMAND) {
-    const [_, path] = parseCommand(command)
-
-    if (path) chdir(path)
-
-    return captureOutput ? { command, type: ScriptCommandType.ChildProcess } : undefined
-  }
-
-  if (run && run.commands[name] && context.commandName && commandName !== name) {
-    const { captureOutput, capturedOutput, commandName } = context
-
-    try {
-      const commandOutput = await runTSCommand(command, run, { captureOutput, capturedOutput, commandName: commandName })
-
-      if (captureOutput) return { command, type: ScriptCommandType.TSCommand, ...(commandOutput ?? {}) }
-
-      return commandOutput && commandOutput.exitCode ? commandOutput.exitCode : undefined
-    } catch (error) {
-      if (captureOutput) return { command, error, exitCode: SIGHUP, type: ScriptCommandType.TSCommand }
-
-      throw Object.assign(new Error(`Script command ${bold(command)} has thrown an error`), { cause: error, command, name: 'ScriptError' })
-    }
-  }
-
-  const childProcessOutput = await runChildProcess(command, run, context)
-  let { error, exitCode } = childProcessOutput
-
-  if (error) {
-    if (!exitCode) exitCode = SIGHUP
-
-    if (error instanceof Error && Object.hasOwn(error, 'code')) {
-      const { code } = error as ErrorWithCode
-
-      if ((code === ErrorCode.Abort && run?.abortController?.signal.aborted) || code === ErrorCode.NoEntity) {
-        error = undefined
-
-        if (code === ErrorCode.NoEntity) {
-          const message = `No ${run
-            ? `command named ${bold(name)} is defined and no `
-            : ''}executable named ${bold(name)} ${run && run.hasProjectExecutables
-              ? 'was found in project dependencies or was resolved on the system.'
-              : 'found.'
-            }${EOL.repeat(2)}${documentationLinkLine(DocumentationLink.Scripts)}${EOL}`
-
-          if (captureOutput) return { command, exitCode, stderr: message, type: ScriptCommandType.ChildProcess }
-          else process.stderr.write(message)
-        }
+          if (output !== undefined) {
+            if (output === false || Object.values(ScriptOutputType).includes(output)) capture.output = output
+            else process.stderr.write(`Invalid output value: ${bold(toString(output))}${EOL}`)
+          }
+        } else process.stderr.write(`Invalid capture arguments value: ${bold(toString(args))}${EOL}`)
       }
+
+      return promise
     }
-  }
-
-  const output: ScriptCommandOutput = { command, type: ScriptCommandType.ChildProcess }
-
-  if (captureOutput) {
-    const { stderr, stdout } = childProcessOutput
-
-    if (error) output.error = error
-    if (exitCode !== 0) output.exitCode = exitCode
-    if (stderr) output.stderr = stderr
-    if (stdout) output.stdout = stdout
-
-    return output
-  } else if (error) throw Object.assign(new Error(`Script child process ${bold(command)} has thrown an error`), { cause: error, command, name: 'ScriptError' })
-
-  if (exitCode) return exitCode
+  }) as ScriptPromise
 }

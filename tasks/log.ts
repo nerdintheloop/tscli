@@ -1,54 +1,39 @@
-import { type TSCommandFunctionContext } from '@nerdintheloop/tscli'
 import { EOL } from 'node:os'
+import { default as process } from 'node:process'
 import { format } from 'node:util'
+import { type CommandFunctionContext } from '../source/types.ts'
 
-type LogTaskFunctionArguments = {
-  alert: boolean
-  blue: boolean
-  bold: boolean
-  check: boolean
-  cross: boolean
-  cyan: boolean
-  green: boolean
-  info?: boolean
-  italic: boolean
-  label?: string
-  magenta: boolean
+export type LogTaskFunctionArguments = {
+  error?: boolean
+  label: string
   message: string
-  red: boolean
-  timerStart: boolean
-  timerStop: boolean
-  yellow: boolean
-  wait: boolean
+  startTimer?: boolean
+  stopTimer?: boolean
+  success?: boolean
+  wait?: boolean
 }
 
-enum AnsiCode {
-  Blink = 5,
-  Bold = 1,
-  BrightBlue = 94,
-  BrightCyan = 96,
-  BrightGreen = 92,
-  BrightMagenta = 95,
-  BrightRed = 91,
-  BrightYellow = 93,
-  Dim = 2,
-  Italic = 3,
-  RemoveAll = 0,
-  RemoveBlink = 25,
-  RemoveBoldDim = 22,
-  RemoveColor = 39,
-  RemoveItalic = 23,
-  RemoveUnderline = 24,
-  Underline = 4
-}
+export const AnsiCode = {
+  Bold: 1,
+  BrightBlue: 94,
+  BrightCyan: 96,
+  BrightGreen: 92,
+  BrightRed: 91,
+  BrightYellow: 93,
+  RemoveBold: 22,
+  RemoveColor: 39,
+} as const
 
-export enum LogMessageIcon {
-  Alert = '!',
-  Check = '✔',
-  Cross = '✘',
-  Info = '•',
-  Wait = '⏳︎',
-}
+export type AnsiCode = (typeof AnsiCode)[keyof typeof AnsiCode]
+
+export const LogMessageIcon = {
+  Error: '✘',
+  Info: '•',
+  Success: '✔',
+  Wait: '⏳︎',
+} as const
+
+export type LogMessageIcon = (typeof LogMessageIcon)[keyof typeof LogMessageIcon]
 
 export const ANSI_SEQUENCE_PREFIX = '\x1b['
 
@@ -56,72 +41,49 @@ export const ANSI_SEQUENCE_SUFFIX = 'm'
 
 export const ansi = (code: AnsiCode) => `${ANSI_SEQUENCE_PREFIX}${code}${ANSI_SEQUENCE_SUFFIX}`
 
-export const blink = (string: string) => `${ansi(AnsiCode.Blink)}${string}${ansi(AnsiCode.RemoveBlink)}`
-
 export const blue = (string: string) => `${ansi(AnsiCode.BrightBlue)}${string}${ansi(AnsiCode.RemoveColor)}`
 
-export const bold = (string: string) => `${ansi(AnsiCode.Bold)}${string}${ansi(AnsiCode.RemoveBoldDim)}`
-
-export const clearLine = () => process.stdout.write(`\r${ANSI_SEQUENCE_PREFIX}2K`)
-
-export const cursorUp = (lineCount = 1) => `${ANSI_SEQUENCE_PREFIX}${lineCount}A`
+export const bold = (string: string) => `${ansi(AnsiCode.Bold)}${string}${ansi(AnsiCode.RemoveBold)}`
 
 export const cyan = (string: string) => `${ansi(AnsiCode.BrightCyan)}${string}${ansi(AnsiCode.RemoveColor)}`
 
-export const dim = (string: string) => `${ansi(AnsiCode.Dim)}${string}${ansi(AnsiCode.RemoveBoldDim)}`
-
 export const green = (string: string) => `${ansi(AnsiCode.BrightGreen)}${string}${ansi(AnsiCode.RemoveColor)}`
-
-export const italic = (string: string) => `${ansi(AnsiCode.Italic)}${string}${ansi(AnsiCode.RemoveItalic)}`
-
-export const magenta = (string: string) => `${ansi(AnsiCode.BrightMagenta)}${string}${ansi(AnsiCode.RemoveColor)}`
 
 export const red = (string: string) => `${ansi(AnsiCode.BrightRed)}${string}${ansi(AnsiCode.RemoveColor)}`
 
-export const underline = (string: string) => `${ansi(AnsiCode.Underline)}${string}${ansi(AnsiCode.RemoveUnderline)}`
-
 export const yellow = (string: string) => `${ansi(AnsiCode.BrightYellow)}${string}${ansi(AnsiCode.RemoveColor)}`
 
-const timerStartTimes: Record<string, number> = {}
+export const log = ({ error, label, message, startTimer, stopTimer, success, wait }: LogTaskFunctionArguments, { script }: CommandFunctionContext) => {
+  const icon = error ? LogMessageIcon.Error : success ? LogMessageIcon.Success : wait ? LogMessageIcon.Wait : LogMessageIcon.Info
+  let prefix = (error ? red : success ? green : wait ? yellow : blue)(`${icon} ${label ?? ''} `)
 
-export default ({ label, message, timerStart, timerStop, ...args }: LogTaskFunctionArguments, { script }: TSCommandFunctionContext) => {
-  const color = args.blue ? blue : args.cyan ? cyan : args.green ? green : args.magenta ? magenta : args.red ? red : args.yellow ? yellow : undefined
-  const icon = args.alert ? LogMessageIcon.Alert : args.check ? LogMessageIcon.Check : args.cross ? LogMessageIcon.Cross : args.info ? LogMessageIcon.Info : args.wait ? LogMessageIcon.Wait : undefined
-  let prefix = ''
-
-  if (label) prefix = `${args.italic ? italic(label) : label} `
-  if (icon) prefix = `${icon} ${prefix}`
-
-  if (prefix) {
-    if (args.bold) prefix = bold(prefix)
-    if (color) prefix = color(prefix)
-  }
-
-  if (timerStart || timerStop) {
+  if (startTimer || stopTimer) {
     const key = label || '__no_label__'
 
-    if (timerStop && timerStartTimes[key]) {
-      const duration = Date.now() - timerStartTimes[key]
+    if (stopTimer && startTimerTimes[key]) {
+      const duration = Date.now() - startTimerTimes[key]
 
       if (!message) message = 'Completed'
 
       message = `${message} in ${duration > 1000 ? `${duration / 1000}s` : `${duration}ms`}`
 
-      delete timerStartTimes[key]
-    } else if (timerStart) {
-      timerStartTimes[key] = Date.now()
+      delete startTimerTimes[key]
+    } else if (startTimer) {
+      startTimerTimes[key] = Date.now()
 
-      if (!message) message = 'Started...'
+      message ||= 'Started...'
     }
   }
 
-  if (!message) message = ''
+  message ||= ''
 
   if (typeof message !== 'string') message = format(message)
 
-  const output = prefix ? (message as string).split(EOL).map((line) => `${prefix}${line}`).join(EOL) : message
+  const output = `${prefix ? (message as string).split(EOL).map((line) => `${prefix}${line}`).join(EOL) : message}${EOL}`
 
-  if (script?.captureOutput) return `${output}${EOL}`
+  if (script?.capture.output) return script?.capture.output === 'buffers' ? { stdout: Buffer.from(output) } : output
 
-  console.log(output)
+  process[error ? 'stderr' : 'stdout'].write(output)
 }
+
+const startTimerTimes: Record<string, number> = {}

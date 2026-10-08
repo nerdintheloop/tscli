@@ -1,109 +1,49 @@
-import { createShellAliasesScripts } from './aliases.ts'
-import { bold, cyan, red } from './ansi.ts'
-import { CREATE_ALIASES_COMMAND, getCommandName, runTSCommand, TSCommandError } from './commands.ts'
-import { type ParsedCLIDefinition } from './definition.ts'
-import { argv, EOL, format, parse, process, SIGHUP } from './external.ts'
-import { composeMainUsageInformation } from './usage.ts'
+import { CommandErrorMessage, type CommandFunction, type CommandsFunction, runCommand } from './commands.ts'
+import { composeCLIDefinitionErrorsMessage, parseCLIDefinition, type ParsedCLIDefinition } from './definition.ts'
+import { composeCLIHelp, HELP_PARSE_ARGS_OPTION } from './help.ts'
+import { bold, capitalize, DOCUMENTATION_URL, DocumentationPath, EOL, ExitCode, format, parse, parseArgs, type ParseArgsOptionsConfig, process, Runtime, SIGINT, toString } from './shared.ts'
+import { createShellCommands } from './shell.ts'
+import type { CommandResult, Configuration } from './types.ts'
 
-export type Run = ParsedCLIDefinition & {
-  abortController?: AbortController
-  alias?: string
-  childProcessEnvironmentVariables?: Record<string, string> | true
-  commandValues: string[]
+export type CommandFunctions = Record<string, CommandFunction | CommandsFunction>
+
+export type Run = {
+  abortSignal: AbortSignal
+  cli: ParsedCLIDefinition
+  cliFlags?: string[]
   cliScriptPath: string
-  hasProjectExecutables?: boolean
-  resolvedExecutablePaths?: Record<string, string>
+  configuration: Configuration
+  executablePaths: Record<string, string>
+  env?: Record<string, string>
+  exit(output?: unknown, exitCode?: number): void
+  moduleCommandFunctions?: Record<string, CommandFunction>
+  promise: Promise<void>
+  runAlias?: string
+  runCommandValues: string[]
+  runtime: Runtime
 }
 
-type StackTraceCallSite = {
+export type StackTraceCallSite = {
   getFileName(): string
   getLineNumber(): number
   getColumnNumber(): number
 }
 
-export const Runtime = {
-  Bun: 'bun',
-  Deno: 'deno',
-  Node: 'node'
+export const SHELL_PARSE_ARGS_OPTION: ParseArgsOptionsConfig = {
+  'shell': {
+    type: 'boolean',
+    short: 's'
+  }
 }
 
-export const abort = (message: string, run?: Run) => {
-  if (run && run.abortController) run.abortController.abort()
+export const composeRunAbortMessage = (template: string, values: string[], documentationPath: DocumentationPath, documentationDescription?: string) => {
+  let message = `${format(template, ...values)}${EOL.repeat(2)}`
 
-  process.stderr.write(`${message}${EOL}`)
+  if (documentationDescription) message += `${documentationDescription} `
 
-  if (!process.exitCode) process.exitCode = SIGHUP
+  message += `${bold(`${DOCUMENTATION_URL}${documentationPath}`)}${EOL}`
 
-  process.exit()
-}
-
-export const composeRunErrorMessage = (error: unknown, run: Run) => {
-  const cliDirectoryPath = parse(run.cliScriptPath).dir
-  const errors: unknown[] = [error]
-  let messages = ''
-
-  if (error instanceof Error) {
-    let cause = error.cause
-
-    while (cause) {
-      errors.push(cause)
-      cause = cause instanceof Error ? cause.cause : undefined
-    }
-  }
-
-  const originalPrepareStackTrace = Error.prepareStackTrace
-
-  // @ts-ignore: Error.prepareStackTrace not defined in @types/node
-  Error.prepareStackTrace = (error: Error, trace: StackTraceCallSite[]) => {
-    const commandModuleCallSite = trace.find((frame: StackTraceCallSite) => frame.getFileName()?.includes(cliDirectoryPath) ?? false)
-    let location: string | undefined
-
-    if (commandModuleCallSite) {
-      const modulePath = commandModuleCallSite.getFileName()
-      const runtime = getRuntime()
-
-      if (runtime === Runtime.Node) {
-        const line = originalPrepareStackTrace(error, [commandModuleCallSite])!.split(EOL).at(-1)!
-
-        const relativeModulePathStartIndex = line.indexOf(cliDirectoryPath!) + cliDirectoryPath!.length
-
-        location = `at ${cyan(`.${line.slice(relativeModulePathStartIndex, line.indexOf(')', relativeModulePathStartIndex))}`)}`
-      } else {
-        const relativeModulePathStartIndex = modulePath?.indexOf(cliDirectoryPath!) + cliDirectoryPath!.length
-        const relativeModulePath = `.${modulePath?.slice(relativeModulePathStartIndex)}`
-
-        location = `at ${cyan(`${relativeModulePath}:${commandModuleCallSite.getLineNumber()}:${commandModuleCallSite.getColumnNumber()}`)}`
-      }
-    }
-
-    return location
-  }
-
-  for (const [index, error] of errors.entries()) {
-    if (index > 0) {
-      if (index > 1) messages += EOL.repeat(2)
-
-      if (error instanceof Error) {
-        const { message, name, stack } = error
-
-        let location = stack
-
-        messages += `${bold(red(`${name}:`))} ${message}`
-
-        if (!stack) {
-          const cause = errors[index - 1] as TSCommandError
-          const causeTSCommandName = getCommandName(cause.command)
-          const causeTSCommandModulePath = run.commands[causeTSCommandName].modulePath!
-
-          location = `in ${cyan(`.${causeTSCommandModulePath.replace(cliDirectoryPath!, '')}`)}`
-        }
-
-        messages += `${EOL}  ${location}`
-      } else messages += format('%s', error)
-    }
-  }
-
-  return `${messages}${EOL}`
+  return message
 }
 
 export const convertRunCommandValuesIntoSequence = (raw: string[]) => {
@@ -128,7 +68,7 @@ export const convertRunCommandValuesIntoSequence = (raw: string[]) => {
           concurrent = undefined
         } else sequence.push(command)
       } else if (concurrent) {
-        if (concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] : concurrent)
+        if (concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] as string : concurrent)
         concurrent = undefined
       }
     } else if (value === '+.') {
@@ -148,71 +88,118 @@ export const convertRunCommandValuesIntoSequence = (raw: string[]) => {
       concurrent.push(command)
       sequence.push(concurrent)
     } else sequence.push(command)
-  } else if (concurrent && concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] : concurrent)
+  } else if (concurrent && concurrent.length > 0) sequence.push(concurrent.length === 1 ? concurrent[0] as string : concurrent)
 
   return sequence
 }
 
-const executeRunCommand = async (command: string, run: Run): Promise<number | void> => {
-  if (command.startsWith(CREATE_ALIASES_COMMAND)) await createShellAliasesScripts(run)
-  else {
-    const output = await runTSCommand(command, run!)
-
-    if (output && output.exitCode) return output.exitCode
-  }
-}
-
-export const executeRunCommands = async (run: Run) => {
-  const sequence = convertRunCommandValuesIntoSequence(run.commandValues)
-  const validCommandNames = [...Object.keys(run.commands), CREATE_ALIASES_COMMAND]
-  const invalidCommand = sequence.flat().find((command) => !validCommandNames.includes(getCommandName(command)))
-
-  if (invalidCommand) abort(`${bold('Invalid command:')} ${red(invalidCommand)}${EOL.repeat(2)}${composeMainUsageInformation(run)}`, run)
-
+export const executeRun = async (run: Run) => {
+  const { cli, cliFlags, configuration, exit, runCommandValues, runtime } = run
+  let error: unknown
   let exitCode = 0
 
-  for (const item of sequence) {
-    if (Array.isArray(item)) {
-      const commandsExitCode = (await Promise.all(item.map((command) => executeRunCommand(command, run)))).find((code) => !!code)
+  if (cliFlags) {
+    try {
+      const { values: { help, shell } } = parseArgs({ args: cliFlags, options: { ...HELP_PARSE_ARGS_OPTION, ...SHELL_PARSE_ARGS_OPTION }, strict: true })
 
-      if (commandsExitCode) exitCode = commandsExitCode
-    } else {
-      const commandExitCode = await executeRunCommand(item, run)
-
-      if (commandExitCode) exitCode = commandExitCode
+      if (help && shell) exit(`The flags ${bold('--help/-h')} and ${bold('--shell/-s')} cannot be combined${EOL}`, ExitCode.Failure)
+      else if (help) exit(composeCLIHelp(run))
+      else if (shell) exit(await createShellCommands(run))
+    } catch (error) {
+      exit(`${(error as Error).message}${EOL}`, ExitCode.Failure)
     }
 
-    if (exitCode) return exitCode
+    // TEMP
+    return
   }
 
-  return exitCode
+  if (cli.errors.length > 0) exit(composeCLIDefinitionErrorsMessage(cli.errors), ExitCode.Failure)
+  else if (configuration.runtime && runtime !== configuration.runtime) exit(composeRunAbortMessage(CommandErrorMessage.InvalidRuntime, [bold(capitalize(configuration.runtime)), bold(capitalize(runtime))], DocumentationPath.CLIVariables), ExitCode.Failure)
+  else if (runCommandValues.length === 0) exit(composeCLIHelp(run))
+  else {
+    const handleSigint = () => exitCode = ExitCode.SignalOffset + SIGINT
+    const sequence = convertRunCommandValuesIntoSequence(runCommandValues)
+
+    process.once('SIGINT', handleSigint)
+
+    try {
+      for (const item of sequence) {
+        if (exitCode) break
+
+        let failedCommandResult: CommandResult | undefined
+
+        if (Array.isArray(item)) {
+          const commandResults = await Promise.all((item as string[]).map((command) => runCommand(command, run)))
+
+          failedCommandResult = commandResults.find(({ error, exitCode }) => error || exitCode)
+        } else {
+          const commandResult = await runCommand(item as string, run)
+
+          if (commandResult.error || commandResult.exitCode) failedCommandResult = commandResult
+        }
+
+        if (failedCommandResult) {
+          exitCode = failedCommandResult.exitCode || ExitCode.Failure
+
+          if (failedCommandResult.error) error = failedCommandResult.error
+          else if (exitCode === ExitCode.NotFound) {
+            const command = failedCommandResult.command[0]
+
+            error = format(CommandErrorMessage.InvalidRunCommand, command, command)
+          }
+        }
+
+        if (exitCode) break
+      }
+    } catch (e) {
+      error = e
+      if (!exitCode) exitCode = ExitCode.Failure
+    }
+
+    process.off('SIGINT', handleSigint)
+  }
+
+  exit(error, exitCode)
 }
 
-export const getRuntime = () => parse(argv[0]!).name
+export const prepareRun = ([executablePath, cliScriptPath, ...runCommandValues]: [string, string, ...string[]], definition: string, configuration: Configuration = {}): Run => {
+  const abortController = new AbortController()
+  const { promise, resolve } = Promise.withResolvers<void>()
+  const run: Run = {
+    abortSignal: abortController.signal,
+    cli: parseCLIDefinition(definition),
+    cliScriptPath,
+    configuration,
+    executablePaths: {},
+    exit: (output: unknown, exitCode = 0) => {
+      abortController.abort()
 
-export const prepareRun = (argv: string[], parsedCLIDefinition: ParsedCLIDefinition): Run => {
-  const [, cliScriptPath, ...cliArguments] = argv as [string, string, ...string[]]
-  const runValues: Partial<Run> = { ...parsedCLIDefinition, cliScriptPath }
+      if (exitCode) {
+        if (output) {
+          if (output instanceof Error) console.error(output)
+          else process.stderr.write(toString(output))
+        }
+        process.exit(exitCode)
+      } else if (output) process.stdout.write(toString(output))
 
-  if (cliArguments.length > 0) {
-    let alias: string | undefined
-
-    while (cliArguments.length > 0 && cliArguments[0]!.startsWith('_')) alias = cliArguments.shift()?.slice(1)
-
-    if (alias) runValues.alias = alias
+      resolve()
+    },
+    promise,
+    runCommandValues,
+    runtime: parse(executablePath).name as Runtime,
   }
 
-  if (cliArguments.length > 0) {
-    const flags: string[] = []
+  if (runCommandValues.length > 0) {
+    while (runCommandValues.length > 0 && runCommandValues[0]!.startsWith('_')) run.runAlias = runCommandValues.shift()?.slice(1)!
 
-    while (cliArguments.length > 0 && cliArguments[0]!.startsWith('-')) flags.push(cliArguments.shift()!)
+    if (runCommandValues.length > 0) {
+      const cliFlags = []
 
-    if (flags.length > 0) {
-      if (flags.includes('-h') || flags.includes('--help')) cliArguments.length = 0
+      while (runCommandValues.length > 0 && runCommandValues[0]!.startsWith('-')) cliFlags.push(runCommandValues.shift()!)
+
+      if (cliFlags.length > 0) run.cliFlags = cliFlags
     }
   }
 
-  runValues.commandValues = cliArguments
-
-  return runValues as Run
+  return run
 }

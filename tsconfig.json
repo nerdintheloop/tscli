@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "exactOptionalPropertyTypes": true,
     "lib": [
       "ESNext"
     ],
@@ -16,5 +17,11 @@
     "noUnusedParameters": true,
     "strict": true,
     "target": "ESNext",
+    "types": [
+      "bun",
+      "deno",
+      "node"
+    ],
+    "verbatimModuleSyntax": true
   }
 }
