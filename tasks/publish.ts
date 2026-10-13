@@ -3,7 +3,7 @@ import { EOL } from 'node:os'
 import { resolve } from 'node:path'
 import { chdir } from 'node:process'
 import { tscli } from '../source/index.ts'
-import { bold } from './log.ts'
+import { bold } from './Utilities.ts'
 
 type PublishTaskFunctionArguments = {
   token: string

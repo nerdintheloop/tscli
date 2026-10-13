@@ -1,4 +1,3 @@
-import { CREATE_SHELL_COMMANDS_COMMAND } from './commands.ts'
 import { type Run } from './run.ts'
 import { bold, collapseWhitespace, dim, EOL, italic, parse, type ParseArgsOptionsConfig, platform, process, Runtime } from './shared.ts'
 
@@ -57,7 +56,7 @@ export const composeCLIHelp = (run: Run) => {
 
   // Footer
   lines.push(
-    `Shell setup:   ${bold('eval')} "$(${tsCommand} ${bold(CREATE_SHELL_COMMANDS_COMMAND)})" (add ${shellOptions} if not detected)`,
+    `Shell setup:   ${bold('eval')} "$(${tsCommand} --shell/-s)" (add ${shellOptions} if not detected)`,
     `Command help:  ${tsCommand} ${bold('<command>')} --help/-h`,
     `Learn more:    ${bold('https://tscli.nerdintheloop.com')}${EOL}`
   )

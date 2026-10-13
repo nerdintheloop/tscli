@@ -4,14 +4,12 @@ import { hasDenoReadPermissions, runChildProcessDeno } from './deno.ts'
 import { composeCommandHelp, HELP_PARSE_ARGS_OPTION } from './help.ts'
 import { runChildProcessNode } from './node.ts'
 import type { Run } from './run.ts'
-import { bold, chdir, cyan, DOCUMENTATION_URL, ErrorCode, ExitCode, format, isObject, italic, parse, parseArgs, process, resolve, Runtime } from './shared.ts'
-import { createShellCommands } from './shell.ts'
+import { blue, bold, chdir, cyan, dim, DOCUMENTATION_URL, ErrorCode, ExitCode, format, green, isExistingFilePath, isObject, italic, parse, parseArgs, process, Runtime, sep, yellow } from './shared.ts'
 import type { CommandResult, FallbackCommandFunction, ScriptContext } from './types.ts'
 
 export type Command = {
   aliased: boolean
   description?: string
-  function?: CommandFunction
   options?: Map<string, OptionArgumentDefinition>
   positionals?: Map<string, PositionalArgumentDefinition>
   rest?: RestArgumentDefinition
@@ -48,52 +46,79 @@ export const CommandErrorMessage = {
 
   InvalidChangeDirectoryPath: `A ${bold('cd')} command requires a valid path value.
 
-Learn more about running child processes at ${cyan(`${DOCUMENTATION_URL}/child-processes`)}.
+Learn more about running child processes at ${bold(cyan(`${DOCUMENTATION_URL}/child-processes`))}.
 `,
 
-  InvalidCommandModuleExport: `The ${bold('%s')} value exported by ${bold('%s')} is not a function.
+  InvalidCommandModuleExport: `The ${bold(yellow('%s'))} value exported from the ${bold(blue(`%s`))} module in ${bold('%s')} is not a function.
 
-A command function exported as either ${bold('%s')} or ${bold('default')} is expected.
+A command function can be defined as either:
 
-Learn more about command modules at ${cyan(`${DOCUMENTATION_URL}/command-modules`)}.
-`,
+  - A function named ${bold(yellow('%s'))} or ${bold(yellow('default'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function named ${bold(yellow('%s'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'%s'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
 
-  InvalidCommandName: `There is no command named ${bold('%s')}.
+A fallback command function can be defined as:
 
-Valid command names are %s.
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'*'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
 
-Learn more about defining commands at ${bold(cyan(`${DOCUMENTATION_URL}/commands`))}.
+Learn more about command functions at ${bold(cyan(`${DOCUMENTATION_URL}/command-functions`))}.
 `,
 
   InvalidFunctionsValue: 'Invalid functions value: %s. An object containing named command functions is expected.',
 
-  InvalidRunCommand: `No command named ${bold('%s')} is defined and no executable named ${bold('%s')} was resolved in project dependencies or on the system.
+  InvalidRunCommand: `No command named ${bold(yellow('%s'))} is defined and no executable named ${bold(yellow('%s'))} was resolved in project dependencies or on the system.
 
-Learn more about running commands at ${cyan(`${DOCUMENTATION_URL}/commands`)}.
+Learn more about running commands at ${bold(cyan(`${DOCUMENTATION_URL}/commands`))}.
 `,
 
-  InvalidRuntime: `%s is required. To use %s instead, change or remove the ${bold('runtime')} configuration value.`,
+  InvalidRuntime: `${bold(green('%s'))} is required. To use ${bold(green('%s'))} instead, change or remove the ${bold(blue('runtime'))} configuration value.
 
-  NoCommandFunction: `No function provided for the ${bold('%s')} command.
+Learn more about runtimes at ${bold(cyan(`${DOCUMENTATION_URL}/runtimes`))}.
+`,
+
+  NoCategoryModuleExport: `The ${bold(blue(`%s`))} module in ${bold('%s')} does not export a ${bold(yellow('%s'))} command function.
 
 A command function can be defined as either:
 
-  - A function named ${bold('%s')} or ${bold('default')} exported from ${bold('%s.ts')} or ${bold('%s/index.ts')}.
-  - A function passed to tscli.functions({ '${bold('%s')}': ${cyan(italic('function'))} }).
+  - A function named ${bold(yellow('%s'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function named ${bold(yellow('%s'))} or ${bold(yellow('default'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'%s'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
 
-A default command function can be defined as either:
+A fallback command function can be defined as:
 
-  - A function passed to tscli.default( ${cyan(italic('function'))} ).
-  - A function passed to tscli.functions({ '${bold('*')}': ${cyan(italic('function'))} }).
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'*'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
 
-Learn more about command functions at ${cyan(`${DOCUMENTATION_URL}/command-functions`)}.
+Learn more about command functions at ${bold(cyan(`${DOCUMENTATION_URL}/command-functions`))}.
 `,
 
-  NoCommandModuleExport: `The ${bold('%s')} module does not export a command function.
+  NoCommandFunction: `There is no command function provided for the ${bold(blue(`%s`))} command.
 
-A command function exported as either ${bold('%s')} or ${bold('default')} is expected.
+A command function can be defined as either:
 
-Learn more about command modules at ${cyan(`${DOCUMENTATION_URL}/command-modules`)}.
+  - A function named ${bold(yellow('%s'))} or ${bold(yellow('default'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function named ${bold(yellow('%s'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'%s'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
+
+A fallback command function can be defined as:
+
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'*'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
+
+Learn more about command functions at ${bold(cyan(`${DOCUMENTATION_URL}/command-functions`))}.
+`,
+
+  NoCommandModuleExport: `The ${bold(blue(`%s`))} module in ${bold('%s')} does not export a command function.
+
+A command function can be defined as either:
+
+  - A function named ${bold(yellow('%s'))} or ${bold(yellow('default'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function named ${bold(yellow('%s'))} exported from ${bold(blue('%s.ts'))} or ${bold(blue('%s/index.ts'))}
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'%s'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
+
+A fallback command function can be defined as:
+
+  - A function passed to ${bold(green('tscli'))}${green('`')}${dim('...')}${green('`(')}${dim('{')} ${yellow('functions:')} ${dim('{')} ${bold(yellow("'*'"))}: ${cyan(italic('function'))} ${dim('} }')}${green(')')}
+
+Learn more about command functions at ${bold(cyan(`${DOCUMENTATION_URL}/command-functions`))}.
 `,
 
   NoDenoDirectoryReadPermissions: 'Deno read permissions are required to change directory to %s',
@@ -103,10 +128,10 @@ Learn more about command modules at ${cyan(`${DOCUMENTATION_URL}/command-modules
 export type CommandErrorMessage = (typeof CommandErrorMessage)[keyof typeof CommandErrorMessage]
 
 export const CommandType = {
+  ChangeDirectory: 'change-directory',
   ChildProcess: 'child-process',
   CommandFunction: 'command-function',
   CommandHelp: 'help',
-  Internal: 'internal',
 } as const
 
 export type CommandType = (typeof CommandType)[keyof typeof CommandType]
@@ -114,8 +139,6 @@ export type CommandType = (typeof CommandType)[keyof typeof CommandType]
 const COMMAND_FUNCTION_RESULT_KEYS = ['exitCode', 'output', 'stderr', 'stdout']
 
 export const CHANGE_DIRECTORY_COMMAND = 'cd'
-
-export const CREATE_SHELL_COMMANDS_COMMAND = 'shell'
 
 export const convertArgsToCommandFunctionArguments = (args: string[], optionDefinitions?: Map<string, OptionArgumentDefinition>, positionalDefinitions?: Map<string, PositionalArgumentDefinition>, restDefinition?: RestArgumentDefinition) => {
   const { values, positionals } = parseArgs({ args, options: optionDefinitions ? convertOptionArgumentDefinitionsIntoArgsParserOptions(optionDefinitions) : {}, strict: false })
@@ -157,6 +180,9 @@ export const convertOptionArgumentDefinitionsIntoArgsParserOptions = (flags: Map
 
     return Object.assign(options, { [long]: option })
   }, {})
+
+
+export const getCommandCategory = (name: string, run: Run) => [...run.cli.categories.entries()].find(([, commands]) => commands.includes(name))?.[0]!
 
 export const isCommandFunctionOutput = (object: unknown): object is CommandFunctionOutput => {
   if (!isObject(object)) return false
@@ -204,10 +230,75 @@ export const parseCommand = (command: string): [name: string, ...args: string[]]
   return values as [name: string, ...args: string[]]
 }
 
+const resolveCommandFunction = async (name: string, run: Run) => {
+  let commandFunction = run.configuration.functions?.[name] ?? run.moduleCommandFunctions?.[name]
+
+  if (!commandFunction) {
+    const category = getCommandCategory(name, run)
+    const cliDirectoryPath = parse(run.cliScriptPath).dir
+    let isCategoryModule = false
+    let module: { [name]?: CommandFunction, default?: CommandFunction } | undefined
+    let moduleName = `${name}.ts`
+    let modulePath = `${cliDirectoryPath}${sep}${moduleName}`
+    let moduleExport: unknown
+    let moduleExportName: string | undefined
+
+    if (await isExistingFilePath(modulePath)) {
+      module = await import(modulePath)
+      moduleExportName = Object.hasOwn(module!, name) ? name : Object.hasOwn(module!, 'default') ? 'default' : undefined
+      if (moduleExportName) moduleExport = module![moduleExportName]
+    } else {
+      moduleName = `${name}/index.ts`
+      modulePath = `${cliDirectoryPath}${sep}${moduleName}`
+
+      if (await isExistingFilePath(modulePath)) {
+        module = await import(modulePath)
+        moduleExportName = Object.hasOwn(module!, name) ? name : Object.hasOwn(module!, 'default') ? 'default' : undefined
+        if (moduleExportName) moduleExport = module![moduleExportName]
+      } else {
+        moduleName = `${category}.ts`
+        modulePath = `${cliDirectoryPath}${sep}${moduleName}`
+
+        if (await isExistingFilePath(modulePath)) {
+          isCategoryModule = true
+          module = await import(modulePath)
+          moduleExportName = Object.hasOwn(module!, name) ? name : undefined
+          if (moduleExportName) moduleExport = module![moduleExportName]
+        } else {
+          moduleName = `${category}/index.ts`
+          modulePath = `${cliDirectoryPath}${sep}${moduleName}`
+
+          if (await isExistingFilePath(modulePath)) {
+            isCategoryModule = true
+            module = await import(modulePath)
+            moduleExportName = Object.hasOwn(module!, name) ? name : undefined
+            if (moduleExportName) moduleExport = module![moduleExportName]
+          }
+        }
+      }
+    }
+
+    if (module) {
+      if (moduleExport !== undefined) {
+        if (typeof moduleExport === 'function') {
+          run.moduleCommandFunctions ??= {}
+          run.moduleCommandFunctions[name] = commandFunction = moduleExport as CommandFunction
+        } else throw format(CommandErrorMessage.InvalidCommandModuleExport, moduleExportName, moduleName, cliDirectoryPath, name, name, name, name, category, category, name)
+      } else {
+        throw isCategoryModule
+          ? format(CommandErrorMessage.NoCategoryModuleExport, moduleName, cliDirectoryPath, name, name, category, category, name, name, name, name)
+          : format(CommandErrorMessage.NoCommandModuleExport, moduleName, cliDirectoryPath, name, name, name, name, category, category, name)
+      }
+    }
+  }
+
+  return commandFunction
+}
+
 export const runCommand = async (command: string | [name: string, ...args: string[]], run: Run, script?: ScriptContext): Promise<CommandResult> => {
   const [name, ...args] = Array.isArray(command) ? command : parseCommand(command)
   const { values } = parseArgs({ args, options: HELP_PARSE_ARGS_OPTION, strict: false })
-  const type = [CHANGE_DIRECTORY_COMMAND, CREATE_SHELL_COMMANDS_COMMAND].includes(name) ? CommandType.Internal
+  const type = name === CHANGE_DIRECTORY_COMMAND ? CommandType.ChangeDirectory
     : values['help'] ? CommandType.CommandHelp
       : run.cli.commands[name] && !(script?.parentCommand === name) ? CommandType.CommandFunction
         : CommandType.ChildProcess
@@ -239,36 +330,14 @@ export const runCommand = async (command: string | [name: string, ...args: strin
     }
 
     case CommandType.CommandFunction: {
-      const { cli, cliScriptPath, configuration } = run
-      let commandFunction = configuration.functions && configuration.functions[name] ? configuration.functions[name] : run.moduleCommandFunctions && run.moduleCommandFunctions[name] ? run.moduleCommandFunctions[name] : undefined
+      const commandFunction = await resolveCommandFunction(name, run)
       let fallbackFunction: FallbackCommandFunction | undefined
-      let module: { [name]?: CommandFunction, default?: CommandFunction } | undefined
-      let modulePath: string | undefined
 
-      if (!commandFunction) {
-        const cliDirectoryPath = parse(cliScriptPath).dir
-
-        try {
-          modulePath = resolve(cliDirectoryPath, `${name}.ts`)
-          module = await import(modulePath)
-        } catch (_) {
-          try {
-            modulePath = resolve(cliDirectoryPath, name, 'index.ts')
-            module = await import(modulePath)
-          } catch (_) { }
-        }
-
-        if (module && (typeof module[name] === 'function' || typeof module.default === 'function')) {
-          run.moduleCommandFunctions ??= {}
-          run.moduleCommandFunctions[name] = commandFunction = typeof module[name] === 'function' ? module[name] : module.default as CommandFunction
-        }
-      }
-
-      if (!commandFunction && configuration.functions) fallbackFunction = configuration.functions['*']
+      if (!commandFunction) fallbackFunction = run.configuration.functions?.['*']
 
       if (commandFunction || fallbackFunction) {
         try {
-          const { options, positionals, rest } = cli.commands[name]!
+          const { options, positionals, rest } = run.cli.commands[name]!
           const functionArguments = convertArgsToCommandFunctionArguments(args, options, positionals, rest)
           const functionContext = { command: [name, ...args], get help() { return composeCommandHelp(name, run) }, script, signal: run.abortSignal }
           const functionOutput = await (commandFunction ? commandFunction(functionArguments, functionContext as CommandFunctionContext) : fallbackFunction!(name, functionArguments, functionContext as CommandFunctionContext))
@@ -287,18 +356,10 @@ export const runCommand = async (command: string | [name: string, ...args: strin
           result.error = error
           result.exitCode = ExitCode.Failure
         }
-      } else if (module) {
-        if (module[name] !== undefined || module.default !== undefined) {
-          const exportName = module[name] !== undefined ? name : 'default'
-
-          result.error = format(CommandErrorMessage.InvalidCommandModuleExport, exportName, modulePath, name)
-          result.exitCode = ExitCode.UsageError
-        } else {
-          result.error = format(CommandErrorMessage.NoCommandModuleExport, modulePath, name)
-          result.exitCode = ExitCode.UsageError
-        }
       } else {
-        result.error = format(CommandErrorMessage.NoCommandFunction, name, name, name, name, name)
+        const category = getCommandCategory(name, run)
+
+        result.error = format(CommandErrorMessage.NoCommandFunction, name, name, name, name, name, category, category, name)
         result.exitCode = ExitCode.NotFound
       }
 
@@ -316,7 +377,7 @@ export const runCommand = async (command: string | [name: string, ...args: strin
       break
     }
 
-    case CommandType.Internal: {
+    case CommandType.ChangeDirectory: {
       if (name === CHANGE_DIRECTORY_COMMAND) {
         const [path] = args
 
@@ -336,7 +397,7 @@ export const runCommand = async (command: string | [name: string, ...args: strin
           result.error = format(CommandErrorMessage.InvalidChangeDirectoryPath)
           result.exitCode = ExitCode.UsageError
         }
-      } else if (name === CREATE_SHELL_COMMANDS_COMMAND) await createShellCommands(run)
+      }
 
       break
     }

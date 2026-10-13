@@ -1,7 +1,14 @@
+import { cp as _cp, mkdir as _mkdir, rm } from 'node:fs/promises'
 import { EOL } from 'node:os'
+import { parse, resolve } from 'node:path'
 import { default as process } from 'node:process'
 import { format } from 'node:util'
 import { type CommandFunctionContext } from '../source/types.ts'
+import { PROJECT_DIRECTORY_PATH } from './shared.ts'
+
+type FileSystemFunctionArguments = {
+  paths?: string[]
+}
 
 export type LogTaskFunctionArguments = {
   error?: boolean
@@ -45,13 +52,31 @@ export const blue = (string: string) => `${ansi(AnsiCode.BrightBlue)}${string}${
 
 export const bold = (string: string) => `${ansi(AnsiCode.Bold)}${string}${ansi(AnsiCode.RemoveBold)}`
 
+export const cp = async ({ paths }: FileSystemFunctionArguments) => {
+  if (paths && paths.length > 1) {
+    const destinationPath = resolve(PROJECT_DIRECTORY_PATH, paths.pop()!)
+    const destinationIsDirectory = await isDirectory(destinationPath)
+
+    await Promise.all(paths.map(async path => {
+      const sourcePath = resolve(PROJECT_DIRECTORY_PATH, path)
+      const destinationFilePath = destinationIsDirectory ? resolve(destinationPath, parse(sourcePath).base) : destinationPath
+
+      await _cp(sourcePath, destinationFilePath, { force: true, recursive: true })
+    }))
+  }
+}
+
 export const cyan = (string: string) => `${ansi(AnsiCode.BrightCyan)}${string}${ansi(AnsiCode.RemoveColor)}`
 
 export const green = (string: string) => `${ansi(AnsiCode.BrightGreen)}${string}${ansi(AnsiCode.RemoveColor)}`
 
-export const red = (string: string) => `${ansi(AnsiCode.BrightRed)}${string}${ansi(AnsiCode.RemoveColor)}`
-
-export const yellow = (string: string) => `${ansi(AnsiCode.BrightYellow)}${string}${ansi(AnsiCode.RemoveColor)}`
+const isDirectory = async (path: string): Promise<boolean> => {
+  try {
+    return (await Bun.file(path).stat()).isDirectory()
+  } catch {
+    return false
+  }
+}
 
 export const log = ({ error, label, message, startTimer, stopTimer, success, wait }: LogTaskFunctionArguments, { script }: CommandFunctionContext) => {
   const icon = error ? LogMessageIcon.Error : success ? LogMessageIcon.Success : wait ? LogMessageIcon.Wait : LogMessageIcon.Info
@@ -85,5 +110,17 @@ export const log = ({ error, label, message, startTimer, stopTimer, success, wai
 
   process[error ? 'stderr' : 'stdout'].write(output)
 }
+
+export const mkdir = async ({ paths }: FileSystemFunctionArguments) => {
+  if (paths) await Promise.all(paths.map(path => _mkdir(resolve(PROJECT_DIRECTORY_PATH, path))))
+}
+
+export const red = (string: string) => `${ansi(AnsiCode.BrightRed)}${string}${ansi(AnsiCode.RemoveColor)}`
+
+export const rmdir = async ({ paths }: FileSystemFunctionArguments) => {
+  if (paths) await Promise.all(paths.map(path => rm(resolve(PROJECT_DIRECTORY_PATH, path), { force: true, recursive: true })))
+}
+
+export const yellow = (string: string) => `${ansi(AnsiCode.BrightYellow)}${string}${ansi(AnsiCode.RemoveColor)}`
 
 const startTimerTimes: Record<string, number> = {}

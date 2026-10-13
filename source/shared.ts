@@ -27,7 +27,8 @@ export const ANSICode = {
   RemoveBoldOrDim: 22,
   RemoveColor: 39,
   RemoveItalic: 23,
-  Reset: 0
+  Reset: 0,
+  Yellow: 93
 } as const
 
 export type ANSICode = (typeof ANSICode)[keyof typeof ANSICode]
@@ -181,3 +182,5 @@ export const red = (string: string) => `${ansi(ANSICode.Red)}${string}${ansi(ANS
 export const splitLineOnLineBreaks = (line: string) => normalizeLineBreaks(line).split(EOL_POSIX)
 
 export const toString = (value: unknown) => format('%s', value)
+
+export const yellow = (string: string) => `${ansi(ANSICode.Yellow)}${string}${ansi(ANSICode.RemoveColor)}`

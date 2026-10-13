@@ -1,4 +1,3 @@
-import { CREATE_SHELL_COMMANDS_COMMAND } from './commands.ts'
 import type { Run } from './run.ts'
 import { EOL, parse, platform, Shell } from './shared.ts'
 
@@ -7,7 +6,6 @@ export const createShellCommands = async (run: Run, shell: Shell = Shell.Default
   const cliAlias = configuration.alias || parse(parse(cliScriptPath).dir).name
   const commandNames = Object.keys(cli.commands).sort()
   const commandAliases = Object.entries(cli.commands).filter(([, { aliased }]) => aliased).map(([name]) => name).sort()
-  const completionValues = [...commandNames, CREATE_SHELL_COMMANDS_COMMAND]
   const runtimeCommand: string = `${runtime}${configuration.runtimeFlags ? ` ${configuration.runtimeFlags.join(' ').replaceAll(`'`, `"`)}` : ''} ${cliScriptPath} _${cliAlias}`
   const lines: string[] = []
 
@@ -20,11 +18,11 @@ export const createShellCommands = async (run: Run, shell: Shell = Shell.Default
 
     switch (shell) {
       case 'bash':
-        lines.push(`complete -W '${completionValues}' ${cliAlias}`)
+        lines.push(`complete -W '${commandNames}' ${cliAlias}`)
         break
 
       case 'zsh':
-        lines.push(`compdef '_arguments "1:command:(${completionValues})"' ${cliAlias}`)
+        lines.push(`compdef '_arguments "1:command:(${commandNames})"' ${cliAlias}`)
         break
     }
   }

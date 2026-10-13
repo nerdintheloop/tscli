@@ -16,7 +16,7 @@ export type CommandResult = {
   output?: unknown
   stderr?: Buffer | string
   stdout?: Buffer | string
-  type: 'child-process' | 'command-function' | 'help' | 'internal'
+  type: 'change-directory' | 'child-process' | 'command-function' | 'help'
 }
 
 export type Configuration = {

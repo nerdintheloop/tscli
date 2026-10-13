@@ -1,7 +1,7 @@
 import { CommandErrorMessage, type CommandFunction, type CommandsFunction, runCommand } from './commands.ts'
 import { composeCLIDefinitionErrorsMessage, parseCLIDefinition, type ParsedCLIDefinition } from './definition.ts'
 import { composeCLIHelp, HELP_PARSE_ARGS_OPTION } from './help.ts'
-import { bold, capitalize, DOCUMENTATION_URL, DocumentationPath, EOL, ExitCode, format, parse, parseArgs, type ParseArgsOptionsConfig, process, Runtime, SIGINT, toString } from './shared.ts'
+import { bold, capitalize, EOL, ExitCode, format, parse, parseArgs, type ParseArgsOptionsConfig, process, Runtime, SIGINT, toString } from './shared.ts'
 import { createShellCommands } from './shell.ts'
 import type { CommandResult, Configuration } from './types.ts'
 
@@ -23,27 +23,11 @@ export type Run = {
   runtime: Runtime
 }
 
-export type StackTraceCallSite = {
-  getFileName(): string
-  getLineNumber(): number
-  getColumnNumber(): number
-}
-
 export const SHELL_PARSE_ARGS_OPTION: ParseArgsOptionsConfig = {
   'shell': {
     type: 'boolean',
     short: 's'
   }
-}
-
-export const composeRunAbortMessage = (template: string, values: string[], documentationPath: DocumentationPath, documentationDescription?: string) => {
-  let message = `${format(template, ...values)}${EOL.repeat(2)}`
-
-  if (documentationDescription) message += `${documentationDescription} `
-
-  message += `${bold(`${DOCUMENTATION_URL}${documentationPath}`)}${EOL}`
-
-  return message
 }
 
 export const convertRunCommandValuesIntoSequence = (raw: string[]) => {
@@ -114,7 +98,7 @@ export const executeRun = async (run: Run) => {
   }
 
   if (cli.errors.length > 0) exit(composeCLIDefinitionErrorsMessage(cli.errors), ExitCode.Failure)
-  else if (configuration.runtime && runtime !== configuration.runtime) exit(composeRunAbortMessage(CommandErrorMessage.InvalidRuntime, [bold(capitalize(configuration.runtime)), bold(capitalize(runtime))], DocumentationPath.CLIVariables), ExitCode.Failure)
+  else if (configuration.runtime && runtime !== configuration.runtime) exit(format(CommandErrorMessage.InvalidRuntime, capitalize(configuration.runtime), capitalize(runtime)), ExitCode.Failure)
   else if (runCommandValues.length === 0) exit(composeCLIHelp(run))
   else {
     const handleSigint = () => exitCode = ExitCode.SignalOffset + SIGINT
